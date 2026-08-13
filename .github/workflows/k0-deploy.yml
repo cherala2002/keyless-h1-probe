@@ -1,0 +1,47 @@
+name: K0 external identity probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - demo/release.txt
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  external-identity:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Attempt WIF from an external repository identity
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          audience: ${{ vars.GCP_WIF_AUDIENCE }}
+          request_reason: keyless hostile=external run=${{ github.run_id }}
+
+      - name: Require external identity denial
+        env:
+          AUTH_OUTCOME: ${{ steps.auth.outcome }}
+        run: |
+          test "$AUTH_OUTCOME" = failure
+          jq -n --arg id external --arg outcome "$AUTH_OUTCOME" --arg run_id "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg sha "$GITHUB_SHA" --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg event "$GITHUB_EVENT_NAME" --arg ref "$GITHUB_REF" --arg environment production \
+            --arg owner_id "$GITHUB_REPOSITORY_OWNER_ID" --arg repository_id "$GITHUB_REPOSITORY_ID" \
+            '{version:1,id:$id,outcome:$outcome,run_id:$run_id,run_attempt:$attempt,head_sha:$sha,workflow_ref:$workflow_ref,event:$event,ref:$ref,environment:$environment,owner_id:$owner_id,repository_id:$repository_id}' \
+            > k0-external.json
+
+      - name: Upload external identity client evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: keyless-external-denial
+          path: k0-external.json
+          if-no-files-found: error
+          retention-days: 7
